@@ -1405,18 +1405,13 @@ virtio_dev_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complet
 	link.link_speed  = SPEED_10G;
 
 	if (vtpci_with_feature(hw, VIRTIO_NET_F_STATUS)) {
-		PMD_INIT_LOG(DEBUG, "Get link status from hw");
 		vtpci_read_dev_config(hw,
 				offsetof(struct virtio_net_config, status),
 				&status, sizeof(status));
 		if ((status & VIRTIO_NET_S_LINK_UP) == 0) {
 			link.link_status = ETH_LINK_DOWN;
-			PMD_INIT_LOG(DEBUG, "Port %d is down",
-				     dev->data->port_id);
 		} else {
 			link.link_status = ETH_LINK_UP;
-			PMD_INIT_LOG(DEBUG, "Port %d is up",
-				     dev->data->port_id);
 		}
 	} else {
 		link.link_status = ETH_LINK_UP;

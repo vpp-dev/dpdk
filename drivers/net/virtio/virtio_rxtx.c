@@ -643,6 +643,7 @@ virtio_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		rxm->next = NULL;
 		rxm->pkt_len = (uint32_t)(len[i] - hdr_size);
 		rxm->data_len = (uint16_t)(len[i] - hdr_size);
+		rxm->ol_flags = 0;
 
 		if (hw->vlan_strip)
 			rte_vlan_strip(rxm);
@@ -760,6 +761,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 		rxm->vlan_tci = 0;
 		rxm->pkt_len = (uint32_t)(len[0] - hdr_size);
 		rxm->data_len = (uint16_t)(len[0] - hdr_size);
+		rxm->ol_flags = 0;
 
 		rxm->port = rxvq->port_id;
 		rx_pkts[nb_rx] = rxm;
@@ -863,7 +865,7 @@ virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	if (unlikely(nb_pkts < 1))
 		return nb_pkts;
 
-	PMD_TX_LOG(DEBUG, "%d packets to xmit", nb_pkts);
+	PMD_TX_LOG(DEBUG, "%d packets to xmit\n", nb_pkts);
 	nb_used = VIRTQUEUE_NUSED(txvq);
 
 	virtio_rmb();
