@@ -731,6 +731,12 @@ typedef uint64_t MARKER64[0]; /**< marker that allows us to overwrite 8 bytes
 /**
  * The generic rte_mbuf, containing a packet mbuf.
  */
+/*
+ * offload in the second cache line, next in the first. Better for vpp
+ * at least as of right now.
+ * If you change this structure, you must change the user-mode
+ * version in rte_mbuf.h
+ */
 struct rte_mbuf {
 	MARKER cacheline0;
 
@@ -783,6 +789,12 @@ struct rte_mbuf {
 	uint32_t pkt_len;         /**< Total pkt len: sum of all segments. */
 	uint16_t data_len;        /**< Amount of data in segment buffer. */
 	uint16_t vlan_tci;        /**< VLAN Tag Control Identifier (CPU order) */
+	uint32_t seqn; /**< Sequence number. See also rte_reorder_insert() */
+	uint16_t vlan_tci_outer;  /**< Outer VLAN Tag Control Identifier (CPU order) */
+	struct rte_mbuf *next;    /**< Next segment of scattered packet. */
+
+	/* second cache line - fields only used in slow path or on TX */
+	MARKER cacheline1 __rte_cache_min_aligned;
 
 	union {
 		uint32_t rss;     /**< RSS hash result if RSS enabled */
@@ -806,20 +818,12 @@ struct rte_mbuf {
 		uint32_t usr;	  /**< User defined tags. See rte_distributor_process() */
 	} hash;                   /**< hash information */
 
-	uint32_t seqn; /**< Sequence number. See also rte_reorder_insert() */
-
-	uint16_t vlan_tci_outer;  /**< Outer VLAN Tag Control Identifier (CPU order) */
-
-	/* second cache line - fields only used in slow path or on TX */
-	MARKER cacheline1 __rte_cache_min_aligned;
-
 	union {
 		void *userdata;   /**< Can be used for external metadata */
 		uint64_t udata64; /**< Allow 8-byte userdata on 32-bit */
 	};
 
 	struct rte_mempool *pool; /**< Pool from which mbuf was allocated. */
-	struct rte_mbuf *next;    /**< Next segment of scattered packet. */
 
 	/* fields to support TX offloads */
 	union {
