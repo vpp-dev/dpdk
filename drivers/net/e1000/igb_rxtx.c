@@ -904,6 +904,21 @@ eth_igb_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		pkt_flags = rx_desc_hlen_type_rss_to_pkt_flags(rxq, hlen_type_rss);
 		pkt_flags = pkt_flags | rx_desc_status_to_pkt_flags(staterr);
 		pkt_flags = pkt_flags | rx_desc_error_to_pkt_flags(staterr);
+		{
+		  /*
+		   * Check packet for VLAN ethernet types and set
+		   * RX Offload flag PKT_RX_VLAN_PKT accordingly.
+		   */
+		  struct ether_hdr *eth_hdr = 
+              rte_pktmbuf_mtod(rxm, struct ether_hdr *);
+		  u16 eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+		  if ((eth_type == ETHER_TYPE_VLAN) ||
+		      (eth_type == ETHER_TYPE_VLAN_AD) ||
+		      (eth_type == ETHER_TYPE_VLAN_9100) ||
+		      (eth_type == ETHER_TYPE_VLAN_9200))
+		    pkt_flags |= PKT_RX_VLAN_PKT;
+		}
 		rxm->ol_flags = pkt_flags;
 		rxm->packet_type = igb_rxd_pkt_info_to_pkt_type(rxd.wb.lower.
 						lo_dword.hs_rss.pkt_info);
@@ -1140,6 +1155,21 @@ eth_igb_recv_scattered_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		pkt_flags = rx_desc_hlen_type_rss_to_pkt_flags(rxq, hlen_type_rss);
 		pkt_flags = pkt_flags | rx_desc_status_to_pkt_flags(staterr);
 		pkt_flags = pkt_flags | rx_desc_error_to_pkt_flags(staterr);
+		{
+		  /*
+		   * Check packet for VLAN ethernet types and set
+		   * RX Offload flag PKT_RX_VLAN_PKT accordingly.
+		   */
+		  struct ether_hdr *eth_hdr = 
+              rte_pktmbuf_mtod(rxm, struct ether_hdr *);
+		  u16 eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+		  if ((eth_type == ETHER_TYPE_VLAN) ||
+		      (eth_type == ETHER_TYPE_VLAN_AD) ||
+		      (eth_type == ETHER_TYPE_VLAN_9100) ||
+		      (eth_type == ETHER_TYPE_VLAN_9200))
+		    pkt_flags |= PKT_RX_VLAN_PKT;
+		}
 		first_seg->ol_flags = pkt_flags;
 		first_seg->packet_type = igb_rxd_pkt_info_to_pkt_type(rxd.wb.
 					lower.lo_dword.hs_rss.pkt_info);
