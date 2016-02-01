@@ -793,6 +793,7 @@ eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		rxm->ol_flags = rx_desc_status_to_pkt_flags(status);
 		rxm->ol_flags = rxm->ol_flags |
 				rx_desc_error_to_pkt_flags(rxd.errors);
+		rxm->packet_type = RTE_PTYPE_UNKNOWN;
 
 		/* Only valid if PKT_RX_VLAN_PKT set in pkt_flags */
 		rxm->vlan_tci = rte_le_to_cpu_16(rxd.special);
@@ -1019,6 +1020,7 @@ eth_em_recv_scattered_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		first_seg->ol_flags = rx_desc_status_to_pkt_flags(status);
 		first_seg->ol_flags = first_seg->ol_flags |
 					rx_desc_error_to_pkt_flags(rxd.errors);
+		first_seg->packet_type = RTE_PTYPE_UNKNOWN;
 
 		/* Only valid if PKT_RX_VLAN_PKT set in pkt_flags */
 		rxm->vlan_tci = rte_le_to_cpu_16(rxd.special);

@@ -701,6 +701,7 @@ vmxnet3_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		rxm->data_off = RTE_PKTMBUF_HEADROOM;
 		rxm->ol_flags = 0;
 		rxm->vlan_tci = 0;
+		rxm->packet_type = RTE_PTYPE_UNKNOWN;
 
 		/*
 		 * If this is the first buffer of the received packet,
