@@ -506,8 +506,15 @@ static void
 igbuio_pci_remove(struct pci_dev *dev)
 {
 	struct rte_uio_pci_dev *udev = pci_get_drvdata(dev);
+	struct uio_info *info = pci_get_drvdata(dev);
 
 	sysfs_remove_group(&dev->dev.kobj, &dev_attr_grp);
+
+	if (info->irq && (info->irq != UIO_IRQ_CUSTOM)){
+		free_irq(info->irq, info->uio_dev);
+		info->irq = UIO_IRQ_NONE;
+	}
+
 	uio_unregister_device(&udev->info);
 	igbuio_pci_release_iomem(&udev->info);
 	if (udev->mode == RTE_INTR_MODE_MSIX)
