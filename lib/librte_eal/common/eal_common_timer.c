@@ -47,9 +47,21 @@
 /* The frequency of the RDTSC timer resolution */
 static uint64_t eal_tsc_resolution_hz;
 
+/* Allow an override of the rte_delay_us function */
+int rte_delay_us_override (unsigned us) __attribute__((weak));
+
+int
+rte_delay_us_override(__attribute__((unused)) unsigned us)
+{
+	return 0;
+}
+
 void
 rte_delay_us(unsigned us)
 {
+	if (rte_delay_us_override(us))
+		return;
+
 	const uint64_t start = rte_get_timer_cycles();
 	const uint64_t ticks = (uint64_t)us * rte_get_timer_hz() / 1E6;
 	while ((rte_get_timer_cycles() - start) < ticks)
