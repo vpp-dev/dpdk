@@ -711,6 +711,8 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 				if (errno == EINTR || errno == EWOULDBLOCK)
 					continue;
 
+                                /* $$$ disable to avoid filling /var/log */
+                                if (0)
 				RTE_LOG(ERR, EAL, "Error reading from file "
 					"descriptor %d: %s\n",
 					events[n].data.fd,
