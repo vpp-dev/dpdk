@@ -1,8 +1,8 @@
 /*
- * Copyright 2008-2014 Cisco Systems, Inc.  All rights reserved.
+ * Copyright 2008-2016 Cisco Systems, Inc.  All rights reserved.
  * Copyright 2007 Nuova Systems, Inc.  All rights reserved.
  *
- * Copyright (c) 2014, Cisco Systems, Inc.
+ * Copyright (c) 2016, Cisco Systems, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -35,6 +35,7 @@
 #include <rte_mbuf.h>
 #include <rte_ethdev.h>
 #include <rte_prefetch.h>
+#include <rte_memzone.h>
 
 #include "enic_compat.h"
 #include "rq_enet_desc.h"
@@ -234,17 +235,6 @@ enic_cq_rx_to_pkt_flags(struct cq_desc *cqd, struct rte_mbuf *mbuf)
 	mbuf->ol_flags = pkt_flags;
 }
 
-static inline uint32_t
-enic_ring_add(uint32_t n_descriptors, uint32_t i0, uint32_t i1)
-{
-	uint32_t d = i0 + i1;
-	ASSERT(i0 < n_descriptors);
-	ASSERT(i1 < n_descriptors);
-	d -= (d >= n_descriptors) ? n_descriptors : 0;
-	return d;
-}
-
-
 uint16_t
 enic_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 	       uint16_t nb_pkts)
@@ -358,4 +348,158 @@ enic_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 	rq->rx_nb_hold = nb_hold;
 
 	return nb_rx;
+}
+
+static inline void enic_free_wq_bufs(struct vnic_wq *wq, u16 completed_index)
+{
+	struct vnic_wq_buf *buf;
+	struct rte_mbuf *m, *free[ENIC_MAX_WQ_DESCS];
+	unsigned int nb_to_free, nb_free = 0, i;
+	struct rte_mempool *pool;
+	unsigned int tail_idx;
+	unsigned int desc_count = wq->ring.desc_count;
+
+	nb_to_free = enic_ring_sub(desc_count, wq->tail_idx, completed_index)
+				   + 1;
+	tail_idx = wq->tail_idx;
+	buf = &wq->bufs[tail_idx];
+	pool = ((struct rte_mbuf *)buf->mb)->pool;
+	for (i = 0; i < nb_to_free; i++) {
+		buf = &wq->bufs[tail_idx];
+		m = (struct rte_mbuf *)(buf->mb);
+		if (likely(m->pool == pool)) {
+			ASSERT(nb_free < ENIC_MAX_WQ_DESCS);
+			free[nb_free++] = m;
+		} else {
+			rte_mempool_put_bulk(pool, (void *)free, nb_free);
+			free[0] = m;
+			nb_free = 1;
+			pool = m->pool;
+		}
+		tail_idx = enic_ring_incr(desc_count, tail_idx);
+		buf->mb = NULL;
+	}
+
+	rte_mempool_put_bulk(pool, (void **)free, nb_free);
+
+	wq->tail_idx = tail_idx;
+	wq->ring.desc_avail += nb_to_free;
+}
+
+unsigned int enic_cleanup_wq(__rte_unused struct enic *enic, struct vnic_wq *wq)
+{
+	u16 completed_index;
+
+	completed_index = *((uint32_t *)wq->cqmsg_rz->addr) & 0xffff;
+
+	if (wq->last_completed_index != completed_index) {
+		enic_free_wq_bufs(wq, completed_index);
+		wq->last_completed_index = completed_index;
+	}
+	return 0;
+}
+
+uint16_t enic_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
+	uint16_t nb_pkts)
+{
+	uint16_t index;
+	unsigned int pkt_len, data_len;
+	unsigned int nb_segs;
+	struct rte_mbuf *tx_pkt;
+	struct vnic_wq *wq = (struct vnic_wq *)tx_queue;
+	struct enic *enic = vnic_dev_priv(wq->vdev);
+	unsigned short vlan_id;
+	unsigned short ol_flags;
+	unsigned int wq_desc_avail;
+	int head_idx;
+	struct vnic_wq_buf *buf;
+	unsigned int hw_ip_cksum_enabled;
+	unsigned int desc_count;
+	struct wq_enet_desc *descs, *desc_p, desc_tmp;
+	uint16_t mss;
+	uint8_t vlan_tag_insert;
+	uint8_t eop;
+	uint64_t bus_addr;
+
+	enic_cleanup_wq(enic, wq);
+	wq_desc_avail = vnic_wq_desc_avail(wq);
+	head_idx = wq->head_idx;
+	desc_count = wq->ring.desc_count;
+
+	nb_pkts = RTE_MIN(nb_pkts, ENIC_TX_XMIT_MAX);
+
+	hw_ip_cksum_enabled = enic->hw_ip_checksum;
+	for (index = 0; index < nb_pkts; index++) {
+		tx_pkt = *tx_pkts++;
+		nb_segs = tx_pkt->nb_segs;
+		if (nb_segs > wq_desc_avail) {
+			if (index > 0)
+				goto post;
+			goto done;
+		}
+
+		pkt_len = tx_pkt->pkt_len;
+		data_len = tx_pkt->data_len;
+		vlan_id = tx_pkt->vlan_tci;
+		ol_flags = tx_pkt->ol_flags;
+
+		mss = 0;
+		vlan_tag_insert = 0;
+		bus_addr = (dma_addr_t)
+			   (tx_pkt->buf_physaddr + tx_pkt->data_off);
+
+		descs = (struct wq_enet_desc *)wq->ring.descs;
+		desc_p = descs + head_idx;
+
+		eop = (data_len == pkt_len);
+
+		if (ol_flags & PKT_TX_VLAN_PKT)
+			vlan_tag_insert = 1;
+
+		if (hw_ip_cksum_enabled && (ol_flags & PKT_TX_IP_CKSUM))
+			mss |= ENIC_CALC_IP_CKSUM;
+
+		if (hw_ip_cksum_enabled && (ol_flags & PKT_TX_TCP_UDP_CKSUM))
+			mss |= ENIC_CALC_TCP_UDP_CKSUM;
+
+		wq_enet_desc_enc(&desc_tmp, bus_addr, data_len, mss, 0, 0, eop,
+				 eop, 0, vlan_tag_insert, vlan_id, 0);
+
+		*desc_p = desc_tmp;
+		buf = &wq->bufs[head_idx];
+		buf->mb = (void *)tx_pkt;
+		head_idx = enic_ring_incr(desc_count, head_idx);
+		wq_desc_avail--;
+
+		if (!eop) {
+			for (tx_pkt = tx_pkt->next; tx_pkt; tx_pkt =
+			    tx_pkt->next) {
+				data_len = tx_pkt->data_len;
+
+				if (tx_pkt->next == NULL)
+					eop = 1;
+				desc_p = descs + head_idx;
+				bus_addr = (dma_addr_t)(tx_pkt->buf_physaddr
+					   + tx_pkt->data_off);
+				wq_enet_desc_enc((struct wq_enet_desc *)
+						 &desc_tmp, bus_addr, data_len,
+						 mss, 0, 0, eop, eop, 0,
+						 vlan_tag_insert, vlan_id, 0);
+
+				*desc_p = desc_tmp;
+				buf = &wq->bufs[head_idx];
+				buf->mb = (void *)tx_pkt;
+				head_idx = enic_ring_incr(desc_count, head_idx);
+				wq_desc_avail--;
+			}
+		}
+	}
+ post:
+	rte_wmb();
+	iowrite32(head_idx, &wq->ctrl->posted_index);
+ done:
+	wq->ring.desc_avail = wq_desc_avail;
+	wq->head_idx = head_idx;
+
+	return index;
 }

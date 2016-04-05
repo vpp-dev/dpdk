@@ -40,11 +40,11 @@
 #include <libgen.h>
 
 #include <rte_pci.h>
-#include <rte_memzone.h>
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
 #include <rte_string_fns.h>
 #include <rte_ethdev.h>
+#include <rte_memzone.h>
 
 #include "enic_compat.h"
 #include "enic.h"
@@ -58,7 +58,6 @@
 #include "vnic_cq.h"
 #include "vnic_intr.h"
 #include "vnic_nic.h"
-#include "enic_vnic_wq.h"
 
 static inline struct rte_mbuf *
 rte_rxmbuf_alloc(struct rte_mempool *mp)
@@ -109,38 +108,17 @@ enic_rxmbuf_queue_release(struct enic *enic, struct vnic_rq *rq)
 	}
 }
 
-
 void enic_set_hdr_split_size(struct enic *enic, u16 split_hdr_size)
 {
 	vnic_set_hdr_split_size(enic->vdev, split_hdr_size);
 }
 
-static void enic_free_wq_buf(__rte_unused struct vnic_wq *wq, struct vnic_wq_buf *buf)
+static void enic_free_wq_buf(struct vnic_wq_buf *buf)
 {
-	struct rte_mbuf *mbuf = (struct rte_mbuf *)buf->os_buf;
+	struct rte_mbuf *mbuf = (struct rte_mbuf *)buf->mb;
 
 	rte_mempool_put(mbuf->pool, mbuf);
-	buf->os_buf = NULL;
-}
-
-static void enic_wq_free_buf(struct vnic_wq *wq,
-	__rte_unused struct cq_desc *cq_desc,
-	struct vnic_wq_buf *buf,
-	__rte_unused void *opaque)
-{
-	enic_free_wq_buf(wq, buf);
-}
-
-static int enic_wq_service(struct vnic_dev *vdev, struct cq_desc *cq_desc,
-	__rte_unused u8 type, u16 q_number, u16 completed_index, void *opaque)
-{
-	struct enic *enic = vnic_dev_priv(vdev);
-
-	vnic_wq_service(&enic->wq[q_number], cq_desc,
-		completed_index, enic_wq_free_buf,
-		opaque);
-
-	return 0;
+	buf->mb = NULL;
 }
 
 static void enic_log_q_error(struct enic *enic)
@@ -163,64 +141,6 @@ static void enic_log_q_error(struct enic *enic)
 	}
 }
 
-unsigned int enic_cleanup_wq(struct enic *enic, struct vnic_wq *wq)
-{
-	unsigned int cq = enic_cq_wq(enic, wq->index);
-
-	/* Return the work done */
-	return vnic_cq_service(&enic->cq[cq],
-		-1 /*wq_work_to_do*/, enic_wq_service, NULL);
-}
-
-void enic_post_wq_index(struct vnic_wq *wq)
-{
-	enic_vnic_post_wq_index(wq);
-}
-
-void enic_send_pkt(struct enic *enic, struct vnic_wq *wq,
-		   struct rte_mbuf *tx_pkt, unsigned short len,
-		   uint8_t sop, uint8_t eop, uint8_t cq_entry,
-		   uint16_t ol_flags, uint16_t vlan_tag)
-{
-	struct wq_enet_desc *desc = vnic_wq_next_desc(wq);
-	uint16_t mss = 0;
-	uint8_t vlan_tag_insert = 0;
-	uint64_t bus_addr = (dma_addr_t)
-	    (tx_pkt->buf_physaddr + tx_pkt->data_off);
-
-	if (sop) {
-		if (ol_flags & PKT_TX_VLAN_PKT)
-			vlan_tag_insert = 1;
-
-		if (enic->hw_ip_checksum) {
-			if (ol_flags & PKT_TX_IP_CKSUM)
-				mss |= ENIC_CALC_IP_CKSUM;
-
-			if (ol_flags & PKT_TX_TCP_UDP_CKSUM)
-				mss |= ENIC_CALC_TCP_UDP_CKSUM;
-		}
-	}
-
-	wq_enet_desc_enc(desc,
-		bus_addr,
-		len,
-		mss,
-		0 /* header_length */,
-		0 /* offload_mode WQ_ENET_OFFLOAD_MODE_CSUM */,
-		eop,
-		cq_entry,
-		0 /* fcoe_encap */,
-		vlan_tag_insert,
-		vlan_tag,
-		0 /* loopback */);
-
-	enic_vnic_post_wq(wq, (void *)tx_pkt, bus_addr, len,
-			  sop,
-			  1 /*desc_skip_cnt*/,
-			  cq_entry,
-			  0 /*compressed send*/,
-			  0 /*wrid*/);
-}
 
 void enic_dev_stats_clear(struct enic *enic)
 {
@@ -298,25 +218,18 @@ void enic_init_vnic_resources(struct enic *enic)
 	unsigned int error_interrupt_enable = 1;
 	unsigned int error_interrupt_offset = 0;
 	unsigned int index = 0;
+	unsigned int cq_idx;
+
+	vnic_dev_stats_clear(enic->vdev);
 
 	for (index = 0; index < enic->rq_count; index++) {
 		vnic_rq_init(&enic->rq[index],
 			enic_cq_rq(enic, index),
 			error_interrupt_enable,
 			error_interrupt_offset);
-	}
 
-	for (index = 0; index < enic->wq_count; index++) {
-		vnic_wq_init(&enic->wq[index],
-			enic_cq_wq(enic, index),
-			error_interrupt_enable,
-			error_interrupt_offset);
-	}
-
-	vnic_dev_stats_clear(enic->vdev);
-
-	for (index = 0; index < enic->cq_count; index++) {
-		vnic_cq_init(&enic->cq[index],
+		cq_idx = enic_cq_rq(enic, index);
+		vnic_cq_init(&enic->cq[cq_idx],
 			0 /* flow_control_enable */,
 			1 /* color_enable */,
 			0 /* cq_head */,
@@ -327,6 +240,26 @@ void enic_init_vnic_resources(struct enic *enic)
 			0 /* cq_message_enable */,
 			0 /* interrupt offset */,
 			0 /* cq_message_addr */);
+	}
+
+	for (index = 0; index < enic->wq_count; index++) {
+		vnic_wq_init(&enic->wq[index],
+			enic_cq_wq(enic, index),
+			error_interrupt_enable,
+			error_interrupt_offset);
+
+		cq_idx = enic_cq_wq(enic, index);
+		vnic_cq_init(&enic->cq[cq_idx],
+			0 /* flow_control_enable */,
+			1 /* color_enable */,
+			0 /* cq_head */,
+			0 /* cq_tail */,
+			1 /* cq_tail_color */,
+			0 /* interrupt_enable */,
+			0 /* cq_entry_enable */,
+			1 /* cq_message_enable */,
+			0 /* interrupt offset */,
+			(u64)enic->wq[index].cqmsg_rz->phys_addr);
 	}
 
 	vnic_intr_init(&enic->intr,
@@ -570,6 +503,7 @@ void enic_free_wq(void *txq)
 	struct vnic_wq *wq = (struct vnic_wq *)txq;
 	struct enic *enic = vnic_dev_priv(wq->vdev);
 
+	rte_memzone_free(wq->cqmsg_rz);
 	vnic_wq_free(wq);
 	vnic_cq_free(&enic->cq[enic->rq_count + wq->index]);
 }
@@ -580,6 +514,8 @@ int enic_alloc_wq(struct enic *enic, uint16_t queue_idx,
 	int err;
 	struct vnic_wq *wq = &enic->wq[queue_idx];
 	unsigned int cq_index = enic_cq_wq(enic, queue_idx);
+	char name[NAME_MAX];
+	static int instance;
 
 	wq->socket_id = socket_id;
 	if (nb_desc) {
@@ -614,6 +550,18 @@ int enic_alloc_wq(struct enic *enic, uint16_t queue_idx,
 		vnic_wq_free(wq);
 		dev_err(enic, "error in allocation of cq for wq\n");
 	}
+
+	/* setup up CQ message */
+	snprintf((char *)name, sizeof(name),
+		 "vnic_cqmsg-%s-%d-%d", enic->bdf_name, queue_idx,
+		instance++);
+
+	wq->cqmsg_rz = rte_memzone_reserve_aligned((const char *)name,
+						   sizeof(uint32_t),
+						   SOCKET_ID_ANY, 0,
+						   ENIC_ALIGN);
+	if (!wq->cqmsg_rz)
+		return -ENOMEM;
 
 	return err;
 }

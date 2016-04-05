@@ -155,6 +155,30 @@ static inline struct enic *pmd_priv(struct rte_eth_dev *eth_dev)
 	return (struct enic *)eth_dev->data->dev_private;
 }
 
+static inline uint32_t
+enic_ring_add(uint32_t n_descriptors, uint32_t i0, uint32_t i1)
+{
+	uint32_t d = i0 + i1;
+	d -= (d >= n_descriptors) ? n_descriptors : 0;
+	return d;
+}
+
+static inline uint32_t
+enic_ring_sub(uint32_t n_descriptors, uint32_t i0, uint32_t i1)
+{
+	int32_t d = i1 - i0;
+	return (uint32_t)((d < 0) ? ((int32_t)n_descriptors + d) : d);
+}
+
+static inline uint32_t
+enic_ring_incr(uint32_t n_descriptors, uint32_t idx)
+{
+	idx++;
+	if (unlikely(idx == n_descriptors))
+		idx = 0;
+	return idx;
+}
+
 #define RTE_LIBRTE_ENIC_ASSERT_ENABLE
 #ifdef RTE_LIBRTE_ENIC_ASSERT_ENABLE
 #define ASSERT(x) do {			\
@@ -209,5 +233,6 @@ extern int enic_clsf_init(struct enic *enic);
 extern void enic_clsf_destroy(struct enic *enic);
 uint16_t enic_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 			uint16_t nb_pkts);
-
+uint16_t enic_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
+			uint16_t nb_pkts);
 #endif /* _ENIC_H_ */

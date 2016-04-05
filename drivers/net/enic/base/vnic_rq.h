@@ -74,7 +74,7 @@ struct vnic_rq {
 	struct vnic_dev_ring ring;
 	struct rte_mbuf **mbuf_ring;		/* array of allocated mbufs */
 	unsigned int mbuf_next_idx;		/* next mb to consume */
-	void *os_buf_head;
+	void *mb_head;
 	unsigned int pkts_outstanding;
 	uint16_t rx_nb_hold;
 	uint16_t rx_free_thresh;

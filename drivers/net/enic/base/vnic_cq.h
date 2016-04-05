@@ -96,41 +96,46 @@ static inline unsigned int vnic_cq_service(struct vnic_cq *cq,
 	u8 type, u16 q_number, u16 completed_index, void *opaque),
 	void *opaque)
 {
-	struct cq_desc *cq_desc;
+	struct cq_desc *cq_desc, *cq_desc_last;
 	unsigned int work_done = 0;
 	u16 q_number, completed_index;
-	u8 type, color;
-	struct rte_mbuf **rx_pkts = opaque;
-	unsigned int ret;
+	u8 type, color, type_color;
 
 	cq_desc = (struct cq_desc *)((u8 *)cq->ring.descs +
 		cq->ring.desc_size * cq->to_clean);
-	cq_desc_dec(cq_desc, &type, &color,
-		&q_number, &completed_index);
+
+	type_color = cq_desc->type_color;
+	color = (type_color >> CQ_DESC_COLOR_SHIFT) & CQ_DESC_COLOR_MASK;
+	if (color == cq->last_color)
+		return 0;
 
 	while (color != cq->last_color) {
-		if (opaque)
-			opaque = (void *)&(rx_pkts[work_done]);
+		cq_desc_last = cq_desc;
 
-		ret = (*q_service)(cq->vdev, cq_desc, type,
-			q_number, completed_index, opaque);
 		cq->to_clean++;
 		if (cq->to_clean == cq->ring.desc_count) {
 			cq->to_clean = 0;
 			cq->last_color = cq->last_color ? 0 : 1;
 		}
 
-		cq_desc = (struct cq_desc *)((u8 *)cq->ring.descs +
-			cq->ring.desc_size * cq->to_clean);
-		cq_desc_dec(cq_desc, &type, &color,
-			&q_number, &completed_index);
-
-		if (ret)
-			work_done++;
+		work_done++;
 		if (work_done >= work_to_do)
 			break;
+
+		cq_desc = (struct cq_desc *)((u8 *)cq->ring.descs +
+			cq->ring.desc_size * cq->to_clean);
+
+		type_color = cq_desc->type_color;
+		color = (type_color >> CQ_DESC_COLOR_SHIFT)
+			& CQ_DESC_COLOR_MASK;
+
 	}
 
+	cq_desc_dec(cq_desc_last, &type, &color,
+		&q_number, &completed_index);
+
+	(*q_service)(cq->vdev, cq_desc, type,
+		q_number, completed_index, opaque);
 	return work_done;
 }
 
