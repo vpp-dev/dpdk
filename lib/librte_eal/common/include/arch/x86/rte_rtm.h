@@ -50,11 +50,14 @@ void rte_xend(void)
 	 asm volatile(".byte 0x0f,0x01,0xd5" ::: "memory");
 }
 
+#define rte_xabort(x) asm volatile(".byte 0xc6,0xf8,%P0" :: "i" (x) : "memory")
+#if 0
 static __attribute__((__always_inline__)) inline
 void rte_xabort(const unsigned int status)
 {
 	asm volatile(".byte 0xc6,0xf8,%P0" :: "i" (status) : "memory");
 }
+#endif
 
 static __attribute__((__always_inline__)) inline
 int rte_xtest(void)
