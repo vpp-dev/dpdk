@@ -206,12 +206,15 @@ enic_cq_rx_to_pkt_flags(struct cq_desc *cqd, struct rte_mbuf *mbuf)
 	if (unlikely(!enic_cq_rx_desc_eop(ciflags)))
 		goto mbuf_flags_done;
 
-	/* VLAN stripping */
+	/* VLAN stripping. Set PKT_RX_VLAN_PKT only if there is a vlan tag
+	 * in the packet passed up
+	 */
 	if (bwflags & CQ_ENET_RQ_DESC_FLAGS_VLAN_STRIPPED) {
-		pkt_flags |= PKT_RX_VLAN_PKT;
 		mbuf->vlan_tci = enic_cq_rx_desc_vlan(cqrd);
 	} else {
 		mbuf->vlan_tci = 0;
+		if (enic_cq_rx_desc_vlan(cqrd))
+			pkt_flags |= PKT_RX_VLAN_PKT;
 	}
 
 	/* RSS flag */
