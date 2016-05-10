@@ -94,7 +94,23 @@ i40e_rxd_to_vlan_tci(struct rte_mbuf *mb, volatile union i40e_rx_desc *rxdp)
 		PMD_RX_LOG(DEBUG, "Descriptor l2tag1: %u",
 			   rte_le_to_cpu_16(rxdp->wb.qword0.lo_dword.l2tag1));
 	} else {
-		mb->vlan_tci = 0;
+		struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(mb, struct ether_hdr *);
+		u16 eth_type = eth_hdr->ether_type;
+
+		// The i40e firmware does not flag VLAN tagged packets if
+		// VLAN stripping is disabled so we need to check the
+		// ethernet header to find out if the received packet
+		// is a VLAN packet
+		if ((eth_type == rte_be_to_cpu_16(ETHER_TYPE_VLAN))      ||
+		    (eth_type == rte_be_to_cpu_16(ETHER_TYPE_VLAN_AD))   ||
+		    (eth_type == rte_be_to_cpu_16(ETHER_TYPE_VLAN_9100)) ||
+		    (eth_type == rte_be_to_cpu_16(ETHER_TYPE_VLAN_9200))) {
+			struct vlan_hdr *vhdr = (struct vlan_hdr *)(eth_hdr+1);
+			mb->ol_flags |= PKT_RX_VLAN_PKT;
+			mb->vlan_tci = rte_be_to_cpu_16(vhdr->vlan_tci);
+		} else {
+			mb->vlan_tci = 0;
+		}
 	}
 #ifndef RTE_LIBRTE_I40E_16BYTE_RX_DESC
 	if (rte_le_to_cpu_16(rxdp->wb.qword2.ext_status) &
