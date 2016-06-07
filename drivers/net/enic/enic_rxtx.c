@@ -251,6 +251,7 @@ enic_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 	struct vnic_cq *cq;
 	volatile struct cq_desc *cqd_ptr;
 	uint8_t color;
+	uint16_t nb_err = 0;
 
 	cq = &enic->cq[enic_cq_rq(enic, rq->index)];
 	rx_id = cq->to_clean;		/* index of cqd, rqd, mbuf_table */
@@ -278,10 +279,7 @@ enic_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		/* allocate a new mbuf */
 		nmb = rte_rxmbuf_alloc(rq->mp);
 		if (nmb == NULL) {
-			dev_err(enic, "RX mbuf alloc failed port=%u qid=%u",
-			enic->port_id, (unsigned)rq->index);
-			rte_eth_devices[enic->port_id].
-					data->rx_mbuf_alloc_failed++;
+			rte_atomic64_inc(&enic->soft_stats.rx_nombuf);
 			break;
 		}
 
@@ -323,9 +321,10 @@ enic_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 			rxmb->packet_type = enic_cq_rx_flags_to_pkt_type(&cqd);
 			enic_cq_rx_to_pkt_flags(&cqd, rxmb);
 		} else {
-			rxmb->pkt_len = 0;
-			rxmb->packet_type = 0;
-			rxmb->ol_flags = 0;
+			rte_pktmbuf_free(rxmb);
+			rte_atomic64_inc(&enic->soft_stats.rx_packet_errors);
+			nb_err++;
+			continue;
 		}
 		rxmb->data_len = rxmb->pkt_len;
 
@@ -337,7 +336,7 @@ enic_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		rx_pkts[nb_rx++] = rxmb;
 	}
 
-	nb_hold += nb_rx;
+	nb_hold += nb_rx + nb_err;
 	cq->to_clean = rx_id;
 
 	if (nb_hold > rq->rx_free_thresh) {
