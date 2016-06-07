@@ -142,6 +142,16 @@ struct enic {
 	struct enic_soft_stats soft_stats;
 };
 
+static inline unsigned int enic_sop_rq(__rte_unused struct enic *enic, unsigned int rq)
+{
+	return rq * 2;
+}
+
+static inline unsigned int enic_data_rq(__rte_unused struct enic *enic, unsigned int rq)
+{
+	return rq * 2 + 1;
+}
+
 static inline unsigned int enic_cq_rq(__rte_unused struct enic *enic, unsigned int rq)
 {
 	return rq;
